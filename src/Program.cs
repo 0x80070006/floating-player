@@ -12,8 +12,8 @@ using WinForms = System.Windows.Forms;
 [assembly: AssemblyTitle("Floating Player")]
 [assembly: AssemblyProduct("Floating Player")]
 [assembly: AssemblyCompany("Floating Player")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.0.1.0")]
+[assembly: AssemblyFileVersion("1.0.1.0")]
 
 namespace FloatingPlayer
 {
@@ -308,7 +308,7 @@ namespace FloatingPlayer
                 Log.Write("diag session=" + snapshot.HasSession + " app=" + snapshot.App + " playing=" + snapshot.Playing
                     + " canSeek=" + snapshot.CanSeek + " pos=" + (int)snapshot.Position.TotalSeconds + "/" + (int)snapshot.Duration.TotalSeconds + " titleLen=" + snapshot.Title.Length + " art=" + (snapshot.ArtKey.Length > 6 ? snapshot.ArtKey.Substring(0, 6) : "-")
                     + " bg=" + ColorMath.ToHex(s.Background) + " accent=" + ColorMath.ToHex(s.Accent)
-                    + " peakDb=" + audio.LastPeakDb.ToString("F1") + " visible=" + bar.IsVisible);
+                    + " peakDb=" + audio.LastPeakDb.ToString("F1") + " visible=" + bar.IsVisible + " fps=" + Visualizer.TakeFrameCount());
             }
         }
     }

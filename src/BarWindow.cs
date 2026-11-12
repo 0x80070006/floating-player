@@ -431,42 +431,59 @@ namespace FloatingPlayer
         }
     }
 
-    // Draws the frequency bands captured from the sound card.
+    // Draws the frequency bands captured from the sound card, about 30 times a second: smooth
+    // enough for the eye and half the work of following the 60 Hz display.
     class Visualizer : FrameworkElement
     {
         const double Gap = 2.5, MinBar = 3;
+        // Windows timers tick every 15.6 ms: 31 ms lands on two ticks (32 fps), 33 ms would need three (21 fps).
+        static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(31);
 
         readonly AudioCapture audio;
-        public Brush Brush;
         readonly double[] target = new double[AudioCapture.BandCount];
         readonly double[] shown = new double[AudioCapture.BandCount];
         readonly Stopwatch clock = Stopwatch.StartNew();
+        readonly DispatcherTimer timer;
+        // Redrawing into a drawing group updates the screen without a layout pass.
+        readonly DrawingGroup drawing = new DrawingGroup();
+        Brush brush;
         double lastTick;
-        bool active, hooked;
+        bool active;
+        static int frames;
+
+        public static int TakeFrameCount() { return System.Threading.Interlocked.Exchange(ref frames, 0); }
 
         public Visualizer(AudioCapture audio, Brush brush)
         {
             this.audio = audio;
-            Brush = brush;
-            IsHitTestVisible = true;
+            this.brush = brush;
+            timer = new DispatcherTimer(DispatcherPriority.Render) { Interval = FrameInterval };
+            timer.Tick += OnFrame;
+        }
+
+        public Brush Brush
+        {
+            get { return brush; }
+            set { brush = value; if (!timer.IsEnabled) Redraw(); }
         }
 
         public void SetActive(bool value)
         {
             active = value;
-            if (!hooked && (active || shown.Any(v => v > 0.002)))
+            if (!timer.IsEnabled && (active || shown.Any(v => v > 0.002)))
             {
-                hooked = true;
                 lastTick = clock.Elapsed.TotalSeconds;
-                CompositionTarget.Rendering += OnRendering;
+                timer.Start();
             }
         }
 
-        void OnRendering(object sender, EventArgs e)
+        void OnFrame(object sender, EventArgs e)
         {
+            // The smoothing follows the real time elapsed, whatever the actual frame rate.
             double now = clock.Elapsed.TotalSeconds, dt = Math.Min(0.1, now - lastTick);
             lastTick = now;
 
+            frames++;
             if (active) audio.Read(target);
             else Array.Clear(target, 0, target.Length);
 
@@ -477,26 +494,40 @@ namespace FloatingPlayer
                 shown[i] += (target[i] - shown[i]) * (target[i] > shown[i] ? rise : fall);
                 if (shown[i] > 0.002) moving = true;
             }
-            InvalidateVisual();
 
             if (!active && !moving)
             {
                 Array.Clear(shown, 0, shown.Length);
-                CompositionTarget.Rendering -= OnRendering;
-                hooked = false;
+                timer.Stop();
             }
+            Redraw();
+        }
+
+        protected override void OnRenderSizeChanged(SizeChangedInfo info)
+        {
+            base.OnRenderSizeChanged(info);
+            Redraw();
         }
 
         protected override void OnRender(DrawingContext dc)
         {
+            dc.DrawDrawing(drawing);
+        }
+
+        void Redraw()
+        {
             double width = ActualWidth, height = ActualHeight;
-            int count = shown.Length;
-            double bar = (width - Gap * (count - 1)) / count;
-            double radius = Math.Min(bar / 2, 1.5);
-            for (int i = 0; i < count; i++)
+            using (DrawingContext dc = drawing.Open())
             {
-                double h = Math.Max(MinBar, shown[i] * height);
-                dc.DrawRoundedRectangle(Brush, null, new Rect(i * (bar + Gap), (height - h) / 2, bar, h), radius, radius);
+                if (width < 1 || height < 1) return;
+                int count = shown.Length;
+                double bar = (width - Gap * (count - 1)) / count;
+                double radius = Math.Min(bar / 2, 1.5);
+                for (int i = 0; i < count; i++)
+                {
+                    double h = Math.Max(MinBar, shown[i] * height);
+                    dc.DrawRoundedRectangle(brush, null, new Rect(i * (bar + Gap), (height - h) / 2, bar, h), radius, radius);
+                }
             }
         }
     }

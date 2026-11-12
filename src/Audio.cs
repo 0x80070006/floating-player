@@ -154,7 +154,7 @@ namespace FloatingPlayer
 
                     DateTime now = DateTime.UtcNow;
                     if (received) lastData = now;
-                    if (received && (now - lastAnalysis).TotalMilliseconds >= 16)
+                    if (received && (now - lastAnalysis).TotalMilliseconds >= 30)   // matches the 30 fps display
                     {
                         lastAnalysis = now;
                         Publish(mine, analyzer.Analyze(mono, monoPos, Volatile.Read(ref sensitivity)));
