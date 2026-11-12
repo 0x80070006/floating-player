@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
@@ -12,8 +12,8 @@ using WinForms = System.Windows.Forms;
 [assembly: AssemblyTitle("Floating Player")]
 [assembly: AssemblyProduct("Floating Player")]
 [assembly: AssemblyCompany("Floating Player")]
-[assembly: AssemblyVersion("1.0.1.0")]
-[assembly: AssemblyFileVersion("1.0.1.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
 
 namespace FloatingPlayer
 {
@@ -25,6 +25,7 @@ namespace FloatingPlayer
         [STAThread]
         static int Main(string[] args)
         {
+            AppDomain.CurrentDomain.UnhandledException += (s, e) => Log.Write("Fatal: " + e.ExceptionObject);
             Func<string, bool> has = flag => args.Any(a => a.Equals(flag, StringComparison.OrdinalIgnoreCase));
 
             if (has("--quit")) { StopRunningInstances(); return 0; }
@@ -80,6 +81,8 @@ namespace FloatingPlayer
             Application app;
             BarWindow bar;
             MediaController media;
+            VolumeControl volume;
+            WinForms.ContextMenuStrip barMenu;
             SettingsWindow settingsWindow;
             WinForms.NotifyIcon tray;
             WinForms.ToolStripMenuItem toggleItem;
@@ -87,7 +90,7 @@ namespace FloatingPlayer
             MediaSnapshot snapshot = new MediaSnapshot();
             ColorScheme coverScheme = ColorScheme.Neutral();
             string artKey = "";
-            bool userHidden;
+            bool userHidden, sessionLocked;
             DateTime lastWanted = DateTime.MinValue;
 
             public Player(Settings settings, bool openSettings, bool diagnostics, MediaSnapshot demo)
@@ -110,7 +113,12 @@ namespace FloatingPlayer
                 };
 
                 audio.Sensitivity = settings.Sensitivity;
-                bar = new BarWindow(settings, audio);
+                volume = new VolumeControl(app.Dispatcher) { PreferApp = settings.VolumeTarget == "app" };
+                bar = new BarWindow(settings, audio, volume);
+                bar.CoverClicked += OpenSourceApp;
+                bar.ContextRequested += ShowBarMenu;
+                bar.VolumeTargetChanged += delegate { QueueSave(); if (settingsWindow != null) settingsWindow.Reload(); };
+                bar.SessionLockChanged += locked => { sessionLocked = locked; UpdateVisibility(); };
                 bar.TogglePressed += delegate { media.Toggle(); };
                 bar.NextPressed += delegate { media.Next(); };
                 bar.PreviousPressed += delegate { media.Previous(); };
@@ -152,7 +160,13 @@ namespace FloatingPlayer
 
             void OnMedia(MediaSnapshot next)
             {
+                bool sourceChanged = next.AppId != snapshot.AppId;
                 snapshot = next;
+                if (sourceChanged)
+                {
+                    volume.SetSource(next.AppId, next.App);
+                    if (bar.IsVisible) bar.RefreshVolume();
+                }
                 bar.Render(next);
                 if (next.ArtKey != artKey)
                 {
@@ -212,13 +226,18 @@ namespace FloatingPlayer
                 // Sessions blink when a browser changes tab or track, so hiding waits a little.
                 if (wanted) lastWanted = DateTime.UtcNow;
                 bool show = wanted || (!userHidden && (DateTime.UtcNow - lastWanted).TotalSeconds < HideDelaySeconds && bar.IsVisible);
+                // A full-screen video or game on the same screen hides the bar right away.
+                if (show && settingsWindow == null && settings.HideInFullscreen && bar.Handle != IntPtr.Zero
+                    && Native.IsFullscreenAppOver(bar.Handle)) show = false;
 
                 if (show && !bar.IsVisible) bar.Show();
                 else if (!show && bar.IsVisible) bar.Hide();
 
-                if (toggleItem != null) toggleItem.Text = bar.IsVisible ? "Masquer la barre" : "Afficher la barre";
+                string toggleText = bar.IsVisible ? "Masquer la barre" : "Afficher la barre";
+                if (toggleItem != null && toggleItem.Text != toggleText) toggleItem.Text = toggleText;
 
-                bool listen = bar.IsVisible && settings.ShowVisualizer && snapshot.HasSession && snapshot.Playing;
+                // Nobody sees the visualizer on a locked session: the capture stops.
+                bool listen = bar.IsVisible && !sessionLocked && settings.ShowVisualizer && snapshot.HasSession && snapshot.Playing;
                 if (listen) audio.Start(); else audio.Stop();
                 bar.SetVisualizerActive(listen);
             }
@@ -253,6 +272,74 @@ namespace FloatingPlayer
                 settingsWindow.Loaded += delegate { settingsWindow.PlaceNear(bar); };
                 settingsWindow.Show();
                 settingsWindow.Activate();
+            }
+
+            void OpenSourceApp()
+            {
+                if (!snapshot.HasSession || snapshot.AppId.Length == 0) return;
+                string[] names, packages;
+                VolumeControl.Candidates(snapshot.AppId, out names, out packages);
+                try
+                {
+                    if (!Native.ActivateApp(names, snapshot.Title) && snapshot.AppId.IndexOf('!') > 0)
+                        Process.Start("explorer.exe", "shell:AppsFolder\\" + snapshot.AppId);
+                }
+                catch (Exception e) { Log.Write("Open app: " + e.Message); }
+            }
+
+            static WinForms.ToolStripMenuItem Item(string text, Action click, bool isChecked = false, bool enabled = true)
+            {
+                var item = new WinForms.ToolStripMenuItem(text) { Checked = isChecked, Enabled = enabled };
+                item.Click += delegate { click(); };
+                return item;
+            }
+
+            // Right click on the bar: what does not deserve a button of its own.
+            void ShowBarMenu()
+            {
+                if (barMenu != null) barMenu.Dispose();
+                barMenu = new WinForms.ContextMenuStrip { ShowCheckMargin = true, ShowImageMargin = false };
+                var items = barMenu.Items;
+                bool has = snapshot.HasSession && !snapshot.Retained;
+
+                if (snapshot.HasSession && snapshot.App.Length > 0) items.Add(Item("Ouvrir " + snapshot.App, OpenSourceApp));
+                if (snapshot.HasSession && snapshot.Title.Length > 0)
+                {
+                    string text = snapshot.Artist.Length > 0 ? snapshot.Artist + " \u2013 " + snapshot.Title : snapshot.Title;
+                    items.Add(Item("Copier le titre", () =>
+                    {
+                        try { Clipboard.SetText(text); } catch (Exception e) { Log.Write("Clipboard: " + e.Message); }
+                    }));
+                }
+                if (has && (snapshot.CanShuffle || snapshot.CanRepeat))
+                {
+                    items.Add(new WinForms.ToolStripSeparator());
+                    if (snapshot.CanShuffle)
+                        items.Add(Item("Lecture aléatoire", () => media.SetShuffle(!snapshot.Shuffle), snapshot.Shuffle));
+                    if (snapshot.CanRepeat)
+                    {
+                        var repeat = new WinForms.ToolStripMenuItem("Répéter");
+                        string[] labels = { "Non", "Le morceau", "Toute la liste" };
+                        for (int i = 0; i < labels.Length; i++)
+                        {
+                            int mode = i;
+                            repeat.DropDownItems.Add(Item(labels[i], () => media.SetRepeat(mode), snapshot.Repeat == mode));
+                        }
+                        items.Add(repeat);
+                    }
+                }
+                if (items.Count > 0) items.Add(new WinForms.ToolStripSeparator());
+                items.Add(Item("Verrouiller la position", () =>
+                {
+                    settings.LockPosition = !settings.LockPosition;
+                    SettingsChanged();
+                    if (settingsWindow != null) settingsWindow.Reload();
+                }, settings.LockPosition));
+                items.Add(Item("Paramètres", ToggleSettings));
+                items.Add(Item("Masquer la barre", () => { userHidden = true; UpdateVisibility(); }));
+                items.Add(new WinForms.ToolStripSeparator());
+                items.Add(Item("Quitter", () => app.Shutdown()));
+                barMenu.Show(WinForms.Cursor.Position);
             }
 
             void CreateTray()

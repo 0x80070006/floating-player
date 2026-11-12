@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
@@ -13,10 +13,13 @@ namespace FloatingPlayer
     {
         public bool HasSession;
         public string App = "";
+        public string AppId = "";
         public string Title = "";
         public string Artist = "";
         public bool Playing;
-        public bool CanPrevious, CanNext, CanToggle, CanSeek;
+        public bool CanPrevious, CanNext, CanToggle, CanSeek, CanShuffle, CanRepeat;
+        public bool Shuffle;
+        public int Repeat;              // 0 off, 1 track, 2 list
         public byte[] Art;
         public string ArtKey = "";
         public TimeSpan Position, Duration;
@@ -90,6 +93,16 @@ namespace FloatingPlayer
         public void Previous()
         {
             Send(s => s.TrySkipPreviousAsync());
+        }
+
+        public void SetShuffle(bool on)
+        {
+            Send(s => s.TryChangeShuffleActiveAsync(on));
+        }
+
+        public void SetRepeat(int mode)
+        {
+            Send(s => s.TryChangeAutoRepeatModeAsync((Windows.Media.MediaPlaybackAutoRepeatMode)mode));
         }
 
         async void Send(Func<GlobalSystemMediaTransportControlsSession, IAsyncOperation<bool>> command)
@@ -203,13 +216,22 @@ namespace FloatingPlayer
             }
             sessionsDirty = false;
 
-            var snapshot = new MediaSnapshot { HasSession = true, App = FriendlyApp(SafeId(session)) };
+            string id = SafeId(session) ?? "";
+            var snapshot = new MediaSnapshot { HasSession = true, AppId = id, App = FriendlyApp(id) };
             var playback = session.GetPlaybackInfo();
             snapshot.Playing = playback.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
             snapshot.CanPrevious = playback.Controls.IsPreviousEnabled;
             snapshot.CanNext = playback.Controls.IsNextEnabled;
             snapshot.CanSeek = playback.Controls.IsPlaybackPositionEnabled;
             snapshot.CanToggle = playback.Controls.IsPlayPauseToggleEnabled || playback.Controls.IsPlayEnabled || playback.Controls.IsPauseEnabled;
+            snapshot.CanShuffle = playback.Controls.IsShuffleEnabled;
+            snapshot.CanRepeat = playback.Controls.IsRepeatEnabled;
+            try
+            {
+                snapshot.Shuffle = playback.IsShuffleActive.HasValue && playback.IsShuffleActive.Value;
+                snapshot.Repeat = playback.AutoRepeatMode.HasValue ? (int)playback.AutoRepeatMode.Value : 0;
+            }
+            catch { }
 
             var timeline = session.GetTimelineProperties();
             snapshot.Position = timeline.Position - timeline.StartTime;
@@ -242,7 +264,7 @@ namespace FloatingPlayer
         {
             return new MediaSnapshot
             {
-                HasSession = true, Retained = true, App = last.App, Title = last.Title, Artist = last.Artist,
+                HasSession = true, Retained = true, App = last.App, AppId = last.AppId, Title = last.Title, Artist = last.Artist,
                 Art = last.Art, ArtKey = last.ArtKey, CanToggle = true,
                 Position = last.Position, Duration = last.Duration, PositionAt = last.PositionAt
             };

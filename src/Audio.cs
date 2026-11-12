@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -83,7 +83,12 @@ namespace FloatingPlayer
         {
             var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
             IMMDevice device;
-            enumerator.GetDefaultAudioEndpoint(0 /* eRender */, 1 /* eMultimedia */, out device);
+            int hr = enumerator.GetDefaultAudioEndpoint(0 /* eRender */, 1 /* eMultimedia */, out device);
+            if (hr != 0 || device == null)
+            {
+                Marshal.ReleaseComObject(enumerator);
+                throw new InvalidOperationException("no output device (0x" + hr.ToString("X8") + ")");
+            }
             string deviceId;
             device.GetId(out deviceId);
 
@@ -115,8 +120,12 @@ namespace FloatingPlayer
 
             var analyzer = new SpectrumAnalyzer(FftSize, sampleRate, BandCount, MinHz, MaxHz);
             var mono = new float[FftSize];
+            var silence = new double[BandCount];
             int monoPos = 0;
             byte[] raw = new byte[0];
+            float[] samples = new float[0];
+            bool fastPath = isFloat && bits == 32;     // the usual mix format: no conversion at all
+            bool silent = false;
             DateTime lastAnalysis = DateTime.MinValue, lastData = DateTime.UtcNow, lastDeviceCheck = DateTime.UtcNow;
 
             client.Start();
@@ -133,20 +142,42 @@ namespace FloatingPlayer
                         uint frames, flags;
                         ulong devicePosition, qpc;
                         capture.GetBuffer(out data, out frames, out flags, out devicePosition, out qpc);
-                        int bytes = (int)frames * blockAlign;
-                        if (raw.Length < bytes) raw = new byte[bytes];
-                        if ((flags & BufferSilent) == 0) Marshal.Copy(data, raw, 0, bytes);
-                        else Array.Clear(raw, 0, bytes);
-                        capture.ReleaseBuffer(frames);
-
-                        for (int f = 0; f < frames; f++)
+                        int count = (int)frames;
+                        if ((flags & BufferSilent) != 0 || data == IntPtr.Zero)
                         {
-                            double sum = 0;
-                            int offset = f * blockAlign;
-                            for (int c = 0; c < channels; c++)
-                                sum += ReadSample(raw, offset + c * (bits / 8), bits, isFloat);
-                            mono[monoPos] = (float)(sum / channels);
-                            monoPos = (monoPos + 1) % FftSize;
+                            capture.ReleaseBuffer(frames);
+                            for (int f = 0; f < count; f++) { mono[monoPos] = 0; monoPos = (monoPos + 1) & (FftSize - 1); }
+                        }
+                        else if (fastPath)
+                        {
+                            int values = count * channels;
+                            if (samples.Length < values) samples = new float[values];
+                            Marshal.Copy(data, samples, 0, values);
+                            capture.ReleaseBuffer(frames);
+                            float scale = 1f / channels;
+                            for (int f = 0, i = 0; f < count; f++)
+                            {
+                                float sum = 0;
+                                for (int c = 0; c < channels; c++) sum += samples[i++];
+                                mono[monoPos] = sum * scale;
+                                monoPos = (monoPos + 1) & (FftSize - 1);
+                            }
+                        }
+                        else
+                        {
+                            int bytes = count * blockAlign;
+                            if (raw.Length < bytes) raw = new byte[bytes];
+                            Marshal.Copy(data, raw, 0, bytes);
+                            capture.ReleaseBuffer(frames);
+                            for (int f = 0; f < count; f++)
+                            {
+                                double sum = 0;
+                                int offset = f * blockAlign;
+                                for (int c = 0; c < channels; c++)
+                                    sum += ReadSample(raw, offset + c * (bits / 8), bits, isFloat);
+                                mono[monoPos] = (float)(sum / channels);
+                                monoPos = (monoPos + 1) & (FftSize - 1);
+                            }
                         }
                         received = true;
                         capture.GetNextPacketSize(out packet);
@@ -154,30 +185,33 @@ namespace FloatingPlayer
 
                     DateTime now = DateTime.UtcNow;
                     if (received) lastData = now;
-                    if (received && (now - lastAnalysis).TotalMilliseconds >= 30)   // matches the 30 fps display
+                    if (received && (now - lastAnalysis).TotalMilliseconds >= 28)   // matches the 30 fps display
                     {
                         lastAnalysis = now;
+                        silent = false;
                         Publish(mine, analyzer.Analyze(mono, monoPos, Volatile.Read(ref sensitivity)));
                         LastPeakDb = analyzer.PeakDb;
                     }
-                    else if ((now - lastData).TotalMilliseconds > 150)
+                    else if (!silent && (now - lastData).TotalMilliseconds > 150)
                     {
                         // The endpoint delivers nothing at all while it is silent.
-                        Publish(mine, new double[BandCount]);
+                        silent = true;
+                        Publish(mine, silence);
                     }
 
                     if ((now - lastDeviceCheck).TotalSeconds >= 2)
                     {
                         lastDeviceCheck = now;
                         IMMDevice currentDevice;
-                        enumerator.GetDefaultAudioEndpoint(0, 1, out currentDevice);
+                        if (enumerator.GetDefaultAudioEndpoint(0, 1, out currentDevice) != 0 || currentDevice == null) return;
                         string currentId;
                         currentDevice.GetId(out currentId);
                         Marshal.ReleaseComObject(currentDevice);
                         if (currentId != deviceId) return;   // Run() reopens the new default device
                     }
 
-                    Thread.Sleep(8);
+                    // The buffer holds 100 ms: one wake-up per displayed frame (two 15.6 ms timer ticks) is enough.
+                    Thread.Sleep(29);
                 }
             }
             finally
@@ -201,24 +235,6 @@ namespace FloatingPlayer
                 case 32: return BitConverter.ToInt32(data, offset) / 2147483648.0;
                 default: return 0;
             }
-        }
-
-        [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-        class MMDeviceEnumerator { }
-
-        [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        interface IMMDeviceEnumerator
-        {
-            void EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices);
-            void GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device);
-        }
-
-        [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        interface IMMDevice
-        {
-            void Activate(ref Guid iid, int context, IntPtr parameters, [MarshalAs(UnmanagedType.IUnknown)] out object instance);
-            void OpenPropertyStore(int access, out IntPtr properties);
-            void GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
         }
 
         [ComImport, Guid("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -259,6 +275,7 @@ namespace FloatingPlayer
         readonly int[] bandStart, bandEnd;
         readonly double[] tilt;
         readonly int[] reverse;
+        readonly double[] result, levels;
         double ceilingDb = -30;
 
         public double PeakDb { get; private set; }
@@ -282,6 +299,8 @@ namespace FloatingPlayer
 
             bandStart = new int[bands];
             bandEnd = new int[bands];
+            result = new double[bands];
+            levels = new double[bands];
             tilt = new double[bands];
             double hzPerBin = (double)sampleRate / size;
             maxHz = Math.Min(maxHz, sampleRate / 2.0 * 0.95);
@@ -301,15 +320,14 @@ namespace FloatingPlayer
             for (int i = 0; i < size; i++)
             {
                 int j = reverse[i];
-                re[j] = ring[(position + i) % size] * window[i];
+                re[j] = ring[(position + i) & (size - 1)] * window[i];
                 im[j] = 0;
             }
             Fft();
 
             int bands = bandStart.Length;
-            var result = new double[bands];
+            Array.Clear(result, 0, bands);
             double loudest = double.NegativeInfinity;
-            var levels = new double[bands];
             for (int b = 0; b < bands; b++)
             {
                 double power = 0;

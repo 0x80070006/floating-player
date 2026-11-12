@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -23,10 +23,10 @@ namespace FloatingPlayer
         readonly Settings settings;
         readonly FrameworkElement view, customRow, sensitivityRow;
         readonly WrapPanel swatches;
-        readonly RadioButton colorCover, colorCustom, hideNever, hideNoMedia, hidePaused;
+        readonly RadioButton colorCover, colorCustom, hideNever, hideNoMedia, hidePaused, volumeApp, volumeSystem;
         readonly Slider opacitySlider, scaleSlider, widthSlider, sensitivitySlider;
         readonly TextBlock opacityValue, scaleValue, widthValue, sensitivityValue;
-        readonly CheckBox blurSwitch, visualizerSwitch, progressSwitch, topmostSwitch, lockSwitch, launchSwitch;
+        readonly CheckBox blurSwitch, visualizerSwitch, progressSwitch, topmostSwitch, lockSwitch, launchSwitch, fullscreenSwitch;
         readonly TextBox hexBox;
         readonly Color cardColor;
         bool loading;
@@ -72,6 +72,9 @@ namespace FloatingPlayer
             hideNever = Find<RadioButton>("HideNever");
             hideNoMedia = Find<RadioButton>("HideNoMedia");
             hidePaused = Find<RadioButton>("HidePaused");
+            volumeApp = Find<RadioButton>("VolumeApp");
+            volumeSystem = Find<RadioButton>("VolumeSystem");
+            fullscreenSwitch = Find<CheckBox>("FullscreenSwitch");
             opacitySlider = Find<Slider>("OpacitySlider");
             scaleSlider = Find<Slider>("ScaleSlider");
             widthSlider = Find<Slider>("WidthSlider");
@@ -92,6 +95,9 @@ namespace FloatingPlayer
             OnChecked(hideNever, () => settings.HideMode = "never");
             OnChecked(hideNoMedia, () => settings.HideMode = "nomedia");
             OnChecked(hidePaused, () => settings.HideMode = "paused");
+            OnChecked(volumeApp, () => settings.VolumeTarget = "app");
+            OnChecked(volumeSystem, () => settings.VolumeTarget = "system");
+            OnToggle(fullscreenSwitch, v => settings.HideInFullscreen = v);
             OnSlide(opacitySlider, v => settings.Opacity = v / 100);
             OnSlide(scaleSlider, v => settings.Scale = v / 100);
             OnSlide(widthSlider, v => settings.BarWidth = v);
@@ -158,6 +164,9 @@ namespace FloatingPlayer
             catch { return false; }
         }
 
+        // The bar changed a setting itself (right-click menu, volume target).
+        public void Reload() { LoadValues(); }
+
         void LoadValues()
         {
             loading = true;
@@ -166,6 +175,9 @@ namespace FloatingPlayer
             hideNever.IsChecked = settings.HideMode == "never";
             hideNoMedia.IsChecked = settings.HideMode == "nomedia";
             hidePaused.IsChecked = settings.HideMode == "paused";
+            volumeApp.IsChecked = settings.VolumeTarget == "app";
+            volumeSystem.IsChecked = settings.VolumeTarget == "system";
+            fullscreenSwitch.IsChecked = settings.HideInFullscreen;
             opacitySlider.Value = Math.Round(settings.Opacity * 100);
             scaleSlider.Value = Math.Round(settings.Scale * 100);
             widthSlider.Value = Math.Round(settings.BarWidth);

@@ -15,6 +15,10 @@
   <img src="docs/bar-3.png" alt="Barre aux couleurs d'une jaquette bordeaux" width="430">
 </p>
 
+<p align="center">
+  <img src="docs/volume.png" alt="Panneau de volume ouvert au-dessus de la barre" width="430">
+</p>
+
 <p align="center"><sub>Morceaux et jaquettes fictifs, générés par le mode démo.</sub></p>
 
 ---
@@ -23,10 +27,14 @@
 
 - **Tout ce qui publie sa lecture à Windows** : YouTube dans le navigateur, Spotify, lecteurs multimédias. La barre affiche la jaquette, le titre et l'artiste.
 - **Couleurs de la jaquette** : le fond et l'accent sont calculés sur la pochette, avec un fondu à chaque changement de morceau et un texte qui reste lisible. Une couleur personnalisée peut les remplacer.
-- **Contrôles** : précédent, lecture/pause, suivant.
+- **Contrôles** : précédent, lecture/pause, suivant. Clic molette sur la barre : lecture/pause.
+- **Volume** : le bouton haut-parleur ouvre un petit panneau au-dessus de la barre. Il règle le volume de l'application qui joue (Brave, Spotify…) sans toucher au reste, ou celui du système. La molette de la souris sur la barre fait ±2 %.
+- **Clic droit** : ouvrir l'application source, copier « artiste – titre », lecture aléatoire et répétition quand l'application les propose, verrouiller la position.
+- **Clic sur la jaquette** : ramène l'application source (l'onglet qui joue) au premier plan.
 - **Timeline glissable** : glissez le bas de la barre pour vous déplacer dans le morceau, avec le timecode affiché au survol, si l'application source le permet.
 - **Visualizer réel** : capture WASAPI loopback de la sortie audio et FFT, sans animation factice.
-- **Discrète** : ne vole jamais le focus, n'apparaît pas dans la barre des tâches, vit dans la zone de notification.
+- **Discrète** : ne vole jamais le focus, n'apparaît pas dans la barre des tâches, vit dans la zone de notification, se cache quand une vidéo ou un jeu passe en plein écran sur son écran, et s'aimante aux bords et au centre de l'écran.
+- **Légère** : la capture audio ne tourne que pendant la lecture, barre visible et session déverrouillée ; le visualizer ne redessine rien quand le son ne bouge pas et la progression avance sans recalcul de mise en page.
 
 ## Réglages
 
@@ -40,7 +48,8 @@ La roue crantée ouvre un panneau dont les réglages s'appliquent en direct :
 - visualizer et sensibilité ;
 - barre de progression ;
 - toujours au premier plan ;
-- masquage : jamais, sans média ou en pause ;
+- masquage : jamais, sans média ou en pause, et en plein écran ;
+- volume réglé : application ou système ;
 - position libre mémorisée, verrouillable ;
 - lancement au démarrage de Windows.
 

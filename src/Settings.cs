@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -43,6 +43,8 @@ namespace FloatingPlayer
         public bool AlwaysOnTop = true;
         public bool LockPosition = false;
         public string HideMode = "nomedia";     // never | nomedia | paused
+        public bool HideInFullscreen = true;    // a video, game or slideshow fills the bar's screen
+        public string VolumeTarget = "app";     // app | system
         public bool LaunchAtStartup = true;
         public bool HasPosition = false;
         public double X = 0;
@@ -115,6 +117,7 @@ namespace FloatingPlayer
             Sensitivity = Clamp(Sensitivity, 0.5, 1.6);
             if (ColorMode != "custom") ColorMode = "cover";
             if (new[] { "never", "nomedia", "paused" }.All(m => m != HideMode)) HideMode = "nomedia";
+            if (VolumeTarget != "system") VolumeTarget = "app";
             System.Windows.Media.Color unused;
             if (!ColorMath.TryParse(CustomColor, out unused)) CustomColor = "#2B4C6F";
         }
